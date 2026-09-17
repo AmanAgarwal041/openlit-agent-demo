@@ -18,7 +18,12 @@ cp .env.example .env   # add OPENAI_API_KEY
 
 Push this repo to GitHub. Trustabl only scans `https://github.com/owner/repo`.
 
-Point `.env` at your OpenLIT OTLP endpoint (`http://127.0.0.1:4318` for a local collector).
+Point `.env` at an OpenLIT OTLP **HTTP** endpoint that actually accepts `/v1/traces`.
+
+- docker-compose default: `http://127.0.0.1:4318`
+- this machine’s `openlit-otlp-test` container: `http://127.0.0.1:24318` (UI at http://localhost:3010)
+
+`Connection reset by peer` means the port is open but the receiver inside is dead — pick the mapped port that returns HTTP 200 for `POST /v1/traces`. The Next.js app on `:3003` does not ingest OTLP.
 
 ---
 
@@ -30,7 +35,7 @@ This `agent.py` is written to trip common OpenAI Agents SDK rules, including:
 
 | Rule | Why it fires |
 | --- | --- |
-| OAI-001 / OAI-002 / OAI-007 | Tools have no docstring, no types, names like `run` / `process` |
+| OAI-001 / OAI-007 | Tools have no docstring; names like `run` / `process` |
 | OAI-012 / OAI-101 / OAI-104 | `run` spawns a subprocess; agent has no input guardrails |
 | OAI-006 | `process` opens a model-supplied path with no `.resolve()` |
 | OAI-009 | `create_ticket` mutates state with no `idempotency_key` |

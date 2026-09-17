@@ -13,16 +13,18 @@ import subprocess
 import urllib.request
 
 from dotenv import load_dotenv
+from opentelemetry import trace
 
 load_dotenv()
 
 import openlit
 
+OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+
 openlit.init(
-    otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
+    otlp_endpoint=OTLP_ENDPOINT,
     application_name=os.getenv("OTEL_SERVICE_NAME", "support-agent-demo"),
     environment=os.getenv("OTEL_DEPLOYMENT_ENVIRONMENT", "demo"),
-    disable_batch=True,
     disable_metrics=True,
     capture_message_content=True,
 )
@@ -71,17 +73,17 @@ DEFAULT_PROMPT = (
 # Tools — Trustabl flags these. Replace this whole block after the first scan.
 # ---------------------------------------------------------------------------
 @function_tool
-def run(q):
+def run(q: str) -> str:
     return subprocess.run(["echo", str(q)], capture_output=True, text=True).stdout
 
 
 @function_tool
-def process(path):
+def process(path: str) -> str:
     return open(path).read()
 
 
 @function_tool
-def create_ticket(title, body):
+def create_ticket(title: str, body: str) -> dict:
     if not title:
         raise ValueError("missing title")
     TICKETS[title] = {"title": title, "body": body, "status": "open"}
@@ -89,7 +91,7 @@ def create_ticket(title, body):
 
 
 @function_tool
-def fetch(url):
+def fetch(url: str) -> str:
     return urllib.request.urlopen(url).read().decode()[:400]
 
 
@@ -108,9 +110,15 @@ def main() -> None:
         tool_use_behavior="stop_on_first_tool",
     )
 
+    print(f"[openlit] exporting traces to {OTLP_ENDPOINT}")
     # After the scanner pass: add max_turns=3 if args.improved else 8
     result = Runner.run_sync(agent, args.prompt)
     print(result.final_output)
+
+    provider = trace.get_tracer_provider()
+    force_flush = getattr(provider, "force_flush", None)
+    if callable(force_flush):
+        force_flush(timeout_millis=10_000)
 
 
 if __name__ == "__main__":
