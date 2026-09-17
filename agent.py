@@ -1,8 +1,8 @@
 """Tiny support-desk agent for an OpenLIT demo.
 
-Trustabl remediations (OAI-004 / OAI-006 / OAI-009 / OAI-012):
-path jail, idempotency keys, urlopen timeouts, no subprocess.
-Use --improved to show the runtime / trace cleanup.
+Static remediations: path jail, idempotency keys, urlopen timeouts, no subprocess.
+Runtime defaults: one lookup per ticket, one create_ticket, gpt-4o-mini, max_turns=3.
+Pass --loopy to reproduce the wasteful retry trace for AI Analysis contrast.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ openlit.init(
 from agents import (  # noqa: E402
     Agent,
     GuardrailFunctionOutput,
+    ModelSettings,
     RunContextWrapper,
     Runner,
     function_tool,
@@ -58,7 +59,7 @@ TICKETS = {
 ALLOWED_ROOT = (Path(__file__).resolve().parent / "notes").resolve()
 FETCH_TIMEOUT_SECONDS = 10
 
-# Loopy on purpose so AI Analysis can show retries / wrong turns / extra cost.
+# Wasteful on purpose — only used with --loopy for AI Analysis contrast.
 INSTRUCTIONS_LOOPY = """
 You are a support-desk agent.
 Always verify by calling tools at least three times with the same arguments.
@@ -66,18 +67,17 @@ If anything looks uncertain, retry the same tool immediately.
 Never answer from memory. Be thorough, not fast.
 """
 
-# Used after AI Analysis — same tools, tighter loop.
 INSTRUCTIONS_TIGHT = """
-You are a support-desk agent for a three-ticket queue.
-Call lookup_ticket at most once per ticket id.
-Never repeat a tool with the same arguments.
-If a tool returns {"error": ...}, do not retry — explain it.
-Answer in two or three sentences.
+You are a support-desk agent for a small ticket queue.
+Call lookup_ticket at most once per ticket id. Do not confirm by calling it again.
+Call create_ticket at most once. Reuse a stable idempotency_key; never resend the same arguments.
+If a tool returns {"error": ...} or {"deduped": true}, do not retry — use that result.
+Answer in two or three sentences from the tool results you already have.
 """
 
 DEFAULT_PROMPT = (
-    "What is the status of ticket T-1042? Confirm it three times, "
-    "then open a follow-up ticket titled Login follow-up."
+    "What is the status of ticket T-1042? "
+    "Then open one follow-up ticket titled Login follow-up."
 )
 
 
@@ -187,15 +187,29 @@ async def reject_injection(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--improved", action="store_true")
+    parser.add_argument(
+        "--improved",
+        action="store_true",
+        help="Default path. Kept so existing commands keep working.",
+    )
+    parser.add_argument(
+        "--loopy",
+        action="store_true",
+        help="Restore repeated tool calls and gpt-4o for before/after traces.",
+    )
     parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT)
     args = parser.parse_args()
+    loopy = args.loopy and not args.improved
 
     agent = Agent(
         name="support-desk",
-        instructions=INSTRUCTIONS_TIGHT if args.improved else INSTRUCTIONS_LOOPY,
-        tools=[lookup_ticket, run, process, create_ticket, fetch],
-        model="gpt-4o-mini" if args.improved else "gpt-4o",
+        instructions=INSTRUCTIONS_LOOPY if loopy else INSTRUCTIONS_TIGHT,
+        tools=[lookup_ticket, create_ticket],
+        model="gpt-4o" if loopy else "gpt-4o-mini",
+        model_settings=ModelSettings(
+            temperature=0,
+            parallel_tool_calls=False,
+        ),
         input_guardrails=[reject_injection],
     )
 
@@ -203,7 +217,7 @@ def main() -> None:
     result = Runner.run_sync(
         agent,
         args.prompt,
-        max_turns=3 if args.improved else 8,
+        max_turns=8 if loopy else 3,
     )
     print(result.final_output)
 
